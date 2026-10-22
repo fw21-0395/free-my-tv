@@ -78,6 +78,8 @@ final class HomeMode {
         // KTC (NextStar; MediaTek)
         "tv.anoki.acr.controller",                                                    // Anoki ACR: watches what's on screen
         "com.mediatek.tv.retaildemo", "com.electronic.manual",                        // store demo, manual
+        // Haier (MediaTek, Android TV 11); its Anoki ACR and store demo are above
+        "com.haier.launcher.haiermatrix",                                             // Zeasn promo channels, app picks
     };
 
     /** The voice assistant, only with disable_assistant=true in config.properties (the mic button stops working). */
@@ -135,7 +137,11 @@ final class HomeMode {
         "com.fengmi.projector.imaging", "com.fengmi.platform", "com.fengmi.Autopair", "com.fengmi.fmsettings",
         "com.fengmi.testsuite", "android.autoinstalls.config.fomovie",
         "uk.co.freeview.tifbridge",
-        "uk.co.freeview.mdsclient", "uk.co.freeview.fvpconfigauth"));
+        "uk.co.freeview.mdsclient", "uk.co.freeview.fvpconfigauth",
+        // Haier (MediaTek): settings and accessory pairing, live TV overlay, remote keys, inputs and factory menu,
+        // install config, low-RAM overlay
+        "com.haier.tv.settings", "com.haier.overlay.tvcenter", "com.oem", "com.haier.oemmanualtest",
+        "android.autoinstalls.config.haier.hanyang", "com.android.tv.overlay.lowram"));
 
     /** One switch at a time (jobs can overlap: a boot check and a button press). */
     private static final Object RUN = new Object();

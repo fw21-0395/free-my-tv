@@ -67,12 +67,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float HERO_TITLE_W = 900;
     // Shelf: tiles with corners concentric with the glass (glass radius = tile radius + padding).
     // Shelf like the tvOS 27 Dock: icons in each brand's color, 48 apart, and the glass bar hugging them with 40 of
-    // padding (the focused icon grows 20% without touching its edge). The icons are 16:9, the shape of the apps' TV
+    // padding (the focused icon grows 28% without touching its edge). The icons are 16:9, the shape of the apps' TV
     // banners, so those are never stretched: up to 224 × 126, 178 × 100 with eight apps.
     private static final float SHELF_PAD = 40, TILE_GAP = 48;
+    // Left and right, more: the first and last tiles grow sideways (28% of a 224 px tile, plus the border) into the
+    // glass's rounded ends.
+    private static final float SHELF_PAD_X = 72;
     private static final float TILE_RADIUS = 22;
     // Tile focus (Apple TV style): it grows from the center and its shadow drops (it "rises" toward the viewer).
-    private static final float FOCUS_GROW = 0.2f;
+    private static final float FOCUS_GROW = 0.28f;
     // Corner capsule.
     // Corner capsule: the height and top offset of the tvOS tab bar (68 and 46).
     private static final float CAPSULE_TOP = 46, CAPSULE_H = 68, BUTTON = 56;
@@ -139,7 +142,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring[] topFocus = new Spring[6];
     private final RectF[] topRects = new RectF[6];
     private final Spring[] cardFocus = new Spring[3];
+    // How wide each card is (0 = tall, 1 = wide): the last focused card is the wide one, and the others make room.
+    // Same springs, so the three always add up to 1 and the row keeps its width while they trade places.
+    private final Spring[] cardWide = new Spring[3];
     private final RectF[] cardRects = new RectF[3];
+    private final Rect cardCrop = new Rect();
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
     private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote;
     private Shader lightGradient;
@@ -246,7 +253,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Paint halo = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Shadows shadows = new Shadows();
     private final Map<Bitmap, BitmapShader> imageShaders = new WeakHashMap<>();
-    private final Matrix imageMatrix = new Matrix();
+    private final Matrix imageMatrix = new Matrix(), sheenMatrix = new Matrix();
     private final Paint imageFill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -259,8 +266,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final TextPaint fitPaint = new TextPaint();
     private final RectF gridCell = new RectF();
     private LinearGradient[] tileShaders = new LinearGradient[0];
-    private LinearGradient tileGlow, cardSheen;
-    private float tileShaderH, cardSheenH;
+    private LinearGradient tileGlow, cardSheen, tileSheen, tileRim;
+    private float tileShaderH, cardSheenH, tileLitH;
     private LinearGradient[] lightSheens = new LinearGradient[0], lightRims = new LinearGradient[0];
     private float[] lightShaderW = new float[0];
     private android.graphics.ColorFilter veilFilter;
@@ -270,7 +277,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private long textPricesAt = -1, textMinute = -1;
     private int textPrefs = -1;
     private String textLanguage;
-    private String weatherTitle, nowTemp, highLow, sunriseText, sunsetText, staleText;
+    private String weatherTitle, nowTemp, highLow, sunriseText, sunsetText, airText = "", staleText;
     private final String[] hourText = new String[6], hourTempText = new String[6];
     private final String[] priceText = new String[HomeData.COINS.length], changeText = new String[HomeData.COINS.length];
 
@@ -377,6 +384,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         for (int i = 0; i < 3; i++) {
             cardFocus[i] = new Spring(0.32f, 0.78f, 0);
+            cardWide[i] = new Spring(0.42f, 0.86f, i == 0 ? 1 : 0);
             cardRects[i] = new RectF();
         }
         makeLightButtons();
@@ -640,6 +648,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt);
+        if (step(cardWide, dt)) {
+            layoutCards();
+            cardsMoving = true;
+        }
         if (topMoving) status.invalidate();
         heroMoving |= topMoving | cardsMoving;
         boolean drawerItemsMoving = step(drawerFocus, dt);
@@ -1122,15 +1134,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void layoutShelf() {
         int n = shelf.size();
-        float pad = SHELF_PAD * k, gap = TILE_GAP * k;
-        float full = (CONTENT_R - MARGIN) * k;
+        float pad = SHELF_PAD * k, padX = SHELF_PAD_X * k, gap = TILE_GAP * k;
+        float full = (CONTENT_R - MARGIN) * k - 2 * (padX - pad);
         // Tiles in the TV banners' own 16:9, so an app's art is never stretched; never taller than L_TILE_H. The glass
         // keeps its bottom edge, so with more apps it only gets lower.
         float tw = Math.min(L_TILE_H * 16f / 9 * k, (full - Math.max(0, n - 1) * gap) / Math.max(1, n));
         float th = tw * 9f / 16;
         float width = n * tw + Math.max(0, n - 1) * gap, left = (w - width) / 2f;
         float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
-        platterRect.set(left - pad, top, left + width + pad, top + th + 2 * pad);
+        platterRect.set(left - padX, top, left + width + padX, top + th + 2 * pad);
         float x = left, y = top + pad;
         for (int i = 0; i < n; i++) {
             tileRects[i].set(x, y, x + tw, y + th);
@@ -1262,8 +1274,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /**
      * App icon like the ones in the tvOS 27 Dock: the brand color edge to edge (a soft gradient) with the logo.
-     * Focused: it grows 20% from the center, with a deep shadow (it "rises" toward the viewer) and a subtle glow at the
-     * top. No border and no reflection, as Apple does it.
+     * Focused: it grows 28% from the center, with a deep shadow (it "rises" toward the viewer), a glare and a lit edge
+     * (dark tiles on the dark shelf were hard to tell apart without them).
      */
     private void drawShelfTile(Canvas c, int i) {
         HomeApps.Item it = shelf.get(i);
@@ -1319,6 +1331,31 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else {
             if (it.tile != null) roundImage(c, it.tile, cell, r);
         }
+        if (fc > 0.01f) {
+            // Lit from above, as on Apple TV: a glare from the top left and the glass edge catching the light (bright
+            // at the top, fading down), like the recommendation cards.
+            if (tileSheen == null || tileLitH != bh) {
+                tileSheen = new LinearGradient(-bw / 2, -bh / 2, bw * 0.1f, bh / 2, 0x40FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
+                tileRim = new LinearGradient(0, -bh / 2, 0, bh / 2, 0xD9FFFFFF, 0x26FFFFFF, Shader.TileMode.CLAMP);
+                tileLitH = bh;
+            }
+            int alpha = Math.round(255 * fc);
+            c.save();
+            c.translate(cx, cy);
+            c.scale(s, s);
+            tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
+            sheen.setShader(tileSheen);
+            sheen.setAlpha(alpha);
+            c.drawRoundRect(tmp, r0, r0, sheen);
+            sheen.setAlpha(255);
+            rim.setShader(tileRim);
+            rim.setAlpha(alpha);
+            rim.setStrokeWidth(2 * k / s);
+            c.drawRoundRect(tmp, r0, r0, rim);
+            rim.setStrokeWidth(2.5f * k);
+            rim.setAlpha(255);
+            c.restore();
+        }
     }
 
     /**
@@ -1327,12 +1364,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * a 49 ms frame), so there the image is the shader of a rounded rectangle instead, which looks the same.
      */
     private void roundImage(Canvas c, Bitmap image, RectF cell, float r) {
+        roundImage(c, image, null, cell, r);
+    }
+
+    /** The same, with only the `src` part of the image (null: all of it). */
+    private void roundImage(Canvas c, Bitmap image, Rect src, RectF cell, float r) {
         if (!Ui.LEGACY) {
             clip.reset();
             clip.addRoundRect(cell, r, r, Path.Direction.CW);
             c.save();
             c.clipPath(clip);
-            c.drawBitmap(image, null, cell, bitmapPaint);
+            c.drawBitmap(image, src, cell, bitmapPaint);
             c.restore();
             return;
         }
@@ -1341,7 +1383,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             shader = new BitmapShader(image, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
             imageShaders.put(image, shader);
         }
-        imageMatrix.setScale(cell.width() / image.getWidth(), cell.height() / image.getHeight());
+        float sx = src == null ? 0 : src.left, sy = src == null ? 0 : src.top;
+        float sw = src == null ? image.getWidth() : src.width(), sh = src == null ? image.getHeight() : src.height();
+        imageMatrix.setTranslate(-sx, -sy);
+        imageMatrix.postScale(cell.width() / sw, cell.height() / sh);
         imageMatrix.postTranslate(cell.left, cell.top);
         shader.setLocalMatrix(imageMatrix);
         imageFill.setShader(shader);
@@ -1565,6 +1610,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawText(Ui.tr("No weather data right now."), x, r.top + 120 * k, cardDim);
             return;
         }
+        if (wx.aqi >= 0) {
+            // Air quality on the title's line, at the right: the level's colored dot, then "AQI 182 · Unhealthy".
+            float ax = r.right - 34 * k - cardTitle.measureText(airText), dot = 7 * k;
+            fill.setShader(null);
+            fill.setColor(HomeData.airColor(wx.aqi, wx.aqiIndia));
+            c.drawCircle(ax - 12 * k - dot, r.top + 54 * k - Ui.halfCap(cardTitle), dot, fill);
+            c.drawText(airText, ax, r.top + 54 * k, cardTitle);
+        }
         String symbol = Symbols.weather(wx.code, wx.isDay);
         float sw = Symbols.width(getContext(), symbol, 52 * k);
         Symbols.draw(getContext(), c, symbol, x + sw / 2, r.top + 132 * k, 52 * k, drawerInk(0.95f));
@@ -1603,6 +1656,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             sunriseText = Ui.trf("Sunrise {time}", "time", Ui.time(wx.sunrise));
             sunsetText = Ui.trf("Sunset {time}", "time", Ui.time(wx.sunset));
+            airText = wx.aqi < 0 ? "" : Ui.trf("AQI {n} · {level}", "n", wx.aqi, "level", HomeData.airLevel(wx.aqi, wx.aqiIndia));
         }
         long minute = System.currentTimeMillis() / 60_000;
         if (data.pricesAt != textPricesAt || minute != textMinute || settings) {
@@ -1707,6 +1761,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (snap) heroFocus.snap(heroFocus.target);
         boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
         heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
+        heroChanged |= aim(cardWide, cardIndex, snap);
         statusChanged |= topChanged;
         tilesDirty |= snap || tilesChanged;
         statusDirty |= snap || statusChanged;
@@ -2530,6 +2585,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (i >= cards.size()) return;
                 if (drawerOpen) closeDrawer();
                 cardIndex = i;
+                showCardBackdrop();
                 break;
             case Z_SHELF:
                 if (i >= shelf.size()) return;
@@ -2565,6 +2621,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (Double.isNaN(wx.temp)) return s.append(". ").append(Ui.tr("No weather data right now.")).toString();
         s.append(". ").append(HomeData.degrees(wx.temp)).append(", ").append(HomeData.condition(wx.code, wx.isDay)).append(". ")
                 .append(Ui.trf("High {max}, low {min}.", "max", HomeData.degrees(wx.max), "min", HomeData.degrees(wx.min)));
+        if (wx.aqi >= 0) s.append(' ').append(Ui.trf("AQI {n} · {level}", "n", wx.aqi, "level", HomeData.airLevel(wx.aqi, wx.aqiIndia))).append('.');
         int hours = Math.min(6, wx.hours.size());
         if (hours > 0) {
             StringBuilder list = new StringBuilder();
@@ -2609,12 +2666,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             topRects[3 + i].set(right - b, cy - b / 2, right, cy + b / 2);
             right -= b + L_BUTTON_GAP * k;
         }
-        float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, left = MARGIN * k, tall = L_TALL_W * k;
-        float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g;
-        cardRects[0].set(left, top, left + wide, top + ch);
-        cardRects[1].set(cardRects[0].right + g, top, cardRects[0].right + g + tall, top + ch);
-        cardRects[2].set(cardRects[1].right + g, top, cardRects[1].right + g + tall, top + ch);
+        layoutCards();
         heroDirty = statusDirty = true;
+    }
+
+    /** The three cards side by side: each one tall, plus its share (cardWide) of the extra width of the wide one. */
+    private void layoutCards() {
+        float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, x = MARGIN * k, tall = L_TALL_W * k;
+        float extra = (CONTENT_R - MARGIN) * k - 3 * tall - 2 * g;
+        float sum = 0;
+        for (Spring s : cardWide) sum += Math.max(0, s.value);
+        for (int i = 0; i < 3; i++) {
+            float share = sum > 0 ? Math.max(0, cardWide[i].value) / sum : (i == 0 ? 1 : 0);
+            float cw = tall + extra * share;
+            cardRects[i].set(x, top, x + cw, top + ch);
+            x += cw + g;
+        }
     }
 
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
@@ -2629,10 +2696,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         for (Recs.Pick p : recs.wanted()) recs.backdrop(p);   // all three tabs preloaded: switching tabs is instant
-        Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(0));
-        if (cards.isEmpty() || b != null) showBackdrop(b);
+        showCardBackdrop();
         heroDirty = true;
         spoken.focusMoved();    // new picks under the focused card
+    }
+
+    /** The background is the wide card's photo (it fades over as another card widens). */
+    private void showCardBackdrop() {
+        Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(Math.min(cardIndex, cards.size() - 1)));
+        if (cards.isEmpty() || b != null) showBackdrop(b);
     }
 
     private void selectTab(int index) {
@@ -2767,9 +2839,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
         c.restore();
         Backdrop b = p == null ? null : recs.backdrop(p);
-        Bitmap img = b == null ? null : (i == 0 ? b.wide : b.tall);
+        Bitmap img = b == null ? null : b.wide;
         if (img != null) {
-            roundImage(c, img, cell, r);
+            // The middle of the wide photo, as wide as the card is right now (its height fits the card's).
+            int cropW = Math.min(img.getWidth(), Math.round(img.getHeight() * cell.width() / cell.height()));
+            cardCrop.set((img.getWidth() - cropW) / 2, 0, (img.getWidth() + cropW) / 2, img.getHeight());
+            roundImage(c, img, cardCrop, cell, r);
         } else {
             fill.setShader(null);
             fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
@@ -2781,11 +2856,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 lightRims = new LinearGradient[cardRects.length];
                 lightShaderW = new float[cardRects.length];
             }
-            if (lightSheens[i] == null || lightShaderW[i] != bw) {
-                lightSheens[i] = new LinearGradient(-bw / 2, -bh / 2, 0, bh / 2, 0x38FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
+            // Made once per card height; the sheen follows the card's width (it changes while the cards trade places)
+            // through its matrix, so nothing is allocated while drawing.
+            if (lightSheens[i] == null || lightShaderW[i] != bh) {
+                lightSheens[i] = new LinearGradient(-0.5f, -0.5f, 0, 0.5f, 0x38FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
                 lightRims[i] = new LinearGradient(0, -bh / 2, 0, bh / 2, 0xE6FFFFFF, 0x59FFFFFF, Shader.TileMode.CLAMP);
-                lightShaderW[i] = bw;
+                lightShaderW[i] = bh;
             }
+            sheenMatrix.setScale(bw, bh);
+            lightSheens[i].setLocalMatrix(sheenMatrix);
             int alpha = Math.round(255 * f);
             c.save();
             c.translate(cx, cy);
@@ -2806,9 +2885,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (p == null) return;
         fitPaint.set(lCardTitle);
         c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 46 * k, lCardTitle);
-        if (i == 0 && p.meta != null && !p.meta.isEmpty()) {
+        // The second line belongs to the wide card: it fades in as the card widens.
+        float wide = Ui.clamp(cardWide[i].value);
+        if (wide > 0.5f && p.meta != null && !p.meta.isEmpty()) {
+            int alpha = lCardMeta.getAlpha();
             fitPaint.set(lCardMeta);
+            lCardMeta.setAlpha(Math.round(alpha * (wide - 0.5f) * 2));
             c.drawText(TextUtils.ellipsize(p.meta, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 80 * k, lCardMeta);
+            lCardMeta.setAlpha(alpha);
         }
     }
 
@@ -2856,6 +2940,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 } else {
                     zone = Z_CARDS;
                     cardIndex = nearest(cardRects, cards.size(), shelf.isEmpty() ? w / 2f : tileRects[shelfIndex].centerX());
+                    showCardBackdrop();
                 }
                 break;
             case Z_CARDS:
@@ -2863,6 +2948,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     int next = Math.max(0, Math.min(cards.size() - 1, cardIndex + dx));
                     if (next == cardIndex) return true;
                     cardIndex = next;
+                    showCardBackdrop();
                 } else if (dy < 0) {
                     zone = Z_TOP;
                     topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
@@ -2883,6 +2969,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     } else {
                         zone = Z_CARDS;
                         cardIndex = nearest(cardRects, cards.size(), topRects[topIndex].centerX());
+                        showCardBackdrop();
                     }
                 } else {
                     return true;

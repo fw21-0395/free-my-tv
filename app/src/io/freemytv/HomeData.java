@@ -53,6 +53,11 @@ final class HomeData {
     private static String weatherUrl() {
         return "https://api.open-meteo.com/v1/forecast?latitude=" + Prefs.latitude() + "&longitude=" + Prefs.longitude() + WEATHER_QUERY;
     }
+    /** Open-Meteo's air quality (CAMS forecasts, no key), fetched with the weather. */
+    private static final String AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality";
+    /** The US AQI now, and the last day's pollutants hour by hour for India's scale (which averages them). */
+    private static final String AIR_QUERY = "&current=us_aqi&hourly=pm2_5,pm10,nitrogen_dioxide,sulphur_dioxide,ozone,carbon_monoxide"
+            + "&past_days=1&forecast_days=1&timezone=auto&timeformat=unixtime";
     private static final long PRICES_EVERY = 5 * 60_000L, WEATHER_EVERY = 30 * 60_000L;
     interface Listener { void onData(); }
 
@@ -118,6 +123,8 @@ final class HomeData {
         int code = -1;
         boolean isDay = true;
         long sunrise, sunset;   // today's, in epoch ms
+        int aqi = -1;           // air quality index now (-1: unknown)
+        boolean aqiIndia;       // on India's scale (CPCB's National AQI), not the US one
         // Next hours (starting at the next full hour): time, temperature, code and day/night.
         final List<Long> hours = new ArrayList<>();
         final List<Double> hourTemp = new ArrayList<>();
@@ -158,7 +165,10 @@ final class HomeData {
             // The cached forecast is for the city it was fetched for; another city means fetch again.
             if (w != null && weatherPlace().equals(cache.getString("weatherPlace", ""))) {
                 weather = parseWeather(w);
-                weatherAt = cache.getLong("weatherAt", 0);
+                weather.aqi = cache.getInt("air", -1);
+                weather.aqiIndia = cache.getBoolean("airIndia", false);
+                // Saved before the air quality was fetched along: fetch again now.
+                weatherAt = cache.contains("air") ? cache.getLong("weatherAt", 0) : 0;
             }
         } catch (Exception ignored) {}
     }
@@ -201,9 +211,16 @@ final class HomeData {
             io.execute(() -> {
                 try {
                     String body = get(weatherUrl());
-                    weather = parseWeather(body);
+                    Weather w = parseWeather(body);
+                    try {   // the air quality is extra: without it, the weather still shows
+                        parseAir(get(AIR_URL + "?latitude=" + Prefs.latitude() + "&longitude=" + Prefs.longitude() + AIR_QUERY), w);
+                    } catch (Exception e) {
+                        AppLog.w("air quality: " + e.getMessage());
+                    }
+                    weather = w;
                     weatherAt = System.currentTimeMillis();
-                    cache.edit().putString("weather", body).putLong("weatherAt", weatherAt).putString("weatherPlace", weatherPlace()).apply();
+                    cache.edit().putString("weather", body).putInt("air", w.aqi).putBoolean("airIndia", w.aqiIndia)
+                            .putLong("weatherAt", weatherAt).putString("weatherPlace", weatherPlace()).apply();
                     notifyListeners();
                 } catch (Exception e) {
                     weatherFailedAt = System.currentTimeMillis();
@@ -374,6 +391,119 @@ final class HomeData {
             f.setMaximumFractionDigits(v >= 1000 ? 0 : 2);
             return f.format(v);
         });
+    }
+
+    /**
+     * India's National AQI (CPCB): for each pollutant, its concentration's breakpoints (µg/m³; CO in mg/m³) for the
+     * index's 0, 50, 100, 200, 300, 400 and 500. PM2.5, PM10, NO₂ and SO₂ go by the last 24 hours' average, ozone and
+     * CO by the worst 8 hours; the AQI is the highest of them.
+     */
+    private static final String[] AIR_FIELDS = {"pm2_5", "pm10", "nitrogen_dioxide", "sulphur_dioxide", "ozone", "carbon_monoxide"};
+    private static final double[][] AIR_BREAKS = {
+        {0, 30, 60, 90, 120, 250, 380},
+        {0, 50, 100, 250, 350, 430, 510},
+        {0, 40, 80, 180, 280, 400, 520},
+        {0, 40, 80, 380, 800, 1600, 2100},
+        {0, 50, 100, 168, 208, 748, 1000},
+        {0, 1, 2, 10, 17, 34, 50},
+    };
+    private static final int[] AIR_INDEX = {0, 50, 100, 200, 300, 400, 500};
+
+    /** Reads Open-Meteo's answer into w: India's scale for a place in India (by its time zone), the US one elsewhere. */
+    private static void parseAir(String body, Weather w) throws Exception {
+        JSONObject o = new JSONObject(body);
+        String zone = o.optString("timezone");
+        if (!zone.equals("Asia/Kolkata") && !zone.equals("Asia/Calcutta")) {
+            w.aqi = o.getJSONObject("current").optInt("us_aqi", -1);
+            w.aqiIndia = false;
+            return;
+        }
+        JSONObject hourly = o.getJSONObject("hourly");
+        JSONArray times = hourly.getJSONArray("time");
+        long now = System.currentTimeMillis() / 1000;
+        int last = -1;
+        for (int i = 0; i < times.length(); i++) if (times.getLong(i) <= now) last = i;
+        if (last < 0) throw new IOException("no air quality hours yet");
+        int aqi = -1;
+        for (int p = 0; p < AIR_FIELDS.length; p++) {
+            JSONArray values = hourly.getJSONArray(AIR_FIELDS[p]);
+            double scale = p == 5 ? 0.001 : 1;   // Open-Meteo's CO is in µg/m³
+            double c = p >= 4 ? worst8h(values, last) : average(values, last - 23, last);
+            if (Double.isNaN(c)) continue;
+            aqi = Math.max(aqi, subIndex(AIR_BREAKS[p], c * scale));
+        }
+        if (aqi < 0) throw new IOException("no pollutant readings");
+        w.aqi = aqi;
+        w.aqiIndia = true;
+    }
+
+    /** The average of the hours from..to (the missing ones skipped), or NaN without enough of them. */
+    private static double average(JSONArray values, int from, int to) {
+        double sum = 0;
+        int n = 0;
+        for (int i = Math.max(0, from); i <= to; i++) {
+            if (values.isNull(i)) continue;
+            sum += values.optDouble(i);
+            n++;
+        }
+        return n >= (to - from + 1) * 2 / 3 ? sum / n : Double.NaN;
+    }
+
+    /** The highest 8-hour average in the last 24 hours. */
+    private static double worst8h(JSONArray values, int last) {
+        double worst = Double.NaN;
+        for (int end = Math.max(7, last - 16); end <= last; end++) {
+            double a = average(values, end - 7, end);
+            if (!Double.isNaN(a) && !(a <= worst)) worst = a;
+        }
+        return worst;
+    }
+
+    /** CPCB's sub-index: linear between the breakpoints, 500 at most. */
+    private static int subIndex(double[] breaks, double c) {
+        for (int i = 1; i < breaks.length; i++) {
+            if (c <= breaks[i]) {
+                double f = (c - breaks[i - 1]) / (breaks[i] - breaks[i - 1]);
+                return (int) Math.round(AIR_INDEX[i - 1] + f * (AIR_INDEX[i] - AIR_INDEX[i - 1]));
+            }
+        }
+        return 500;
+    }
+
+    /** The AQI's level in words: India's six (CPCB) or the US EPA's six. */
+    static String airLevel(int aqi, boolean india) {
+        if (india) {
+            if (aqi <= 50) return Ui.tr("air|Good");
+            if (aqi <= 100) return Ui.tr("air|Satisfactory");
+            if (aqi <= 200) return Ui.tr("air|Moderate");
+            if (aqi <= 300) return Ui.tr("air|Poor");
+            if (aqi <= 400) return Ui.tr("air|Very poor");
+            return Ui.tr("air|Severe");
+        }
+        if (aqi <= 50) return Ui.tr("air|Good");
+        if (aqi <= 100) return Ui.tr("air|Moderate");
+        if (aqi <= 150) return Ui.tr("air|Unhealthy for sensitive groups");
+        if (aqi <= 200) return Ui.tr("air|Unhealthy");
+        if (aqi <= 300) return Ui.tr("air|Very unhealthy");
+        return Ui.tr("air|Hazardous");
+    }
+
+    /** The level's color, as on each scale (India: greens, yellow, orange, red, dark red; US: up to purple and maroon). */
+    static int airColor(int aqi, boolean india) {
+        if (india) {
+            if (aqi <= 50) return 0xFF00B050;
+            if (aqi <= 100) return 0xFF92D050;
+            if (aqi <= 200) return 0xFFFFD60A;
+            if (aqi <= 300) return 0xFFFF9500;
+            if (aqi <= 400) return 0xFFFF3B30;
+            return 0xFFC00000;
+        }
+        if (aqi <= 50) return 0xFF34C759;
+        if (aqi <= 100) return 0xFFFFCC00;
+        if (aqi <= 150) return 0xFFFF9500;
+        if (aqi <= 200) return 0xFFFF3B30;
+        if (aqi <= 300) return 0xFFAF52DE;
+        return 0xFFA2264B;
     }
 
     /** The weather in words, from Open-Meteo's WMO code. */

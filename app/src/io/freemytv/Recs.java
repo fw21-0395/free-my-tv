@@ -48,6 +48,7 @@ final class Recs {
         String title, backdrop, meta = "", app, pkg;
         String link;            // opens the title in its app (looked up with Watchmode), or null: the app's home
         boolean detailed;
+        boolean mine;           // one of your shows (my_shows), not a pick
     }
 
     interface Listener { void onRecs(); }
@@ -113,6 +114,7 @@ final class Recs {
     private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
     private final java.util.Set<String> pending = new java.util.HashSet<>();
     private volatile List<Pick> picks = new ArrayList<>();
+    private final List<Pick> mine = myShows();
     private volatile int period = -1;
     private volatile long listAt;
     private volatile boolean fetching;
@@ -132,8 +134,46 @@ final class Recs {
             listAt = cache.getLong("listAt", 0);
             listLanguage = cache.getString("language", cache.getBoolean("english", false) ? "en" : "pt");
             keyStamp = cache.getLong("keyStamp", 0);
+            String savedMine = cache.getString("mine", null);
+            if (savedMine != null) {
+                for (Pick old : parse(new JSONArray(savedMine))) {
+                    for (Pick p : mine) {
+                        if (p.id != old.id || !p.link.equals(old.link)) continue;
+                        p.title = old.title;
+                        p.backdrop = old.backdrop;
+                        p.meta = old.meta;
+                        p.detailed = old.detailed;
+                    }
+                }
+            }
         } catch (Exception ignored) {
         }
+    }
+
+    /**
+     * my_shows (config.properties): "2316:70136120,1668:70153404", TMDB's show number and Netflix's. Netflix's /watch/
+     * with the show's own number (not an episode's) resumes the show where you stopped.
+     */
+    private static List<Pick> myShows() {
+        List<Pick> out = new ArrayList<>();
+        for (String entry : Config.MY_SHOWS.split(",")) {
+            String[] ids = entry.trim().split(":");
+            if (entry.trim().isEmpty()) continue;
+            if (ids.length != 2 || !ids[0].matches("\\d{1,9}") || !ids[1].matches("\\d+")) {
+                AppLog.w("my_shows: \"" + entry.trim() + "\" isn't TMDB number:Netflix number");
+                continue;
+            }
+            Pick p = new Pick();
+            p.id = Integer.parseInt(ids[0]);
+            p.kind = "tv";
+            p.title = "";
+            p.app = "netflix";
+            p.pkg = "com.netflix.ninja";
+            p.link = "https://www.netflix.com/watch/" + ids[1];
+            p.mine = true;
+            out.add(p);
+        }
+        return out;
     }
 
     void addListener(Listener l) { if (!listeners.contains(l)) listeners.add(l); }
@@ -181,23 +221,34 @@ final class Recs {
         return now(null);
     }
 
-    /** This hour's 3, movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). */
+    /**
+     * This hour's 3, movies only ("movie") or shows only ("tv"); null = both (the home screen tabs). Explore (null)
+     * starts with your shows (my_shows), whose app is on the TV.
+     */
     List<Pick> now(String kind) {
-        List<Pick> list = new ArrayList<>();
-        if (!hasKey(context)) return list;    // no TMDB key: no recommendations
+        List<Pick> out = new ArrayList<>();
+        if (!hasKey(context)) return out;    // no TMDB key: no recommendations
         Map<String, Boolean> have = new HashMap<>();   // one look per app, not per title (this runs every 15 s)
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        if (kind == null) {
+            for (Pick p : mine) {
+                if (out.size() < 3 && have.computeIfAbsent(p.pkg, this::installed) && seen.add(key(p))) {
+                    out.add(p);
+                    seen.add(franchise(p.title));
+                }
+            }
+        }
+        List<Pick> list = new ArrayList<>();
         for (Pick p : picks) {
             if ((kind == null || kind.equals(p.kind))
                     && (!p.detailed || (p.pkg != null && have.computeIfAbsent(p.pkg, this::installed)))) list.add(p);   // app missing: skip
         }
-        if (list.isEmpty()) return list;
+        if (list.isEmpty()) return out;
         long hour = System.currentTimeMillis() / 3600_000L;
         // Three per hour, never two from the same franchise ("Law & Order" and "Law & Order: Special…").
-        List<Pick> out = new ArrayList<>();
-        java.util.Set<String> seen = new java.util.HashSet<>();
         for (int i = 0; i < list.size() && out.size() < 3; i++) {
             Pick p = list.get((int) ((hour * 3 + i) % list.size()));
-            if (seen.add(franchise(p.title))) out.add(p);
+            if (!seen.contains(key(p)) && seen.add(franchise(p.title))) out.add(p);
         }
         return out;
     }
@@ -253,6 +304,7 @@ final class Recs {
         int p = period(now);
         boolean stale = newKey || p != period || now - listAt > LIST_EVERY || now < listAt || picks.isEmpty()
                 || !listLanguage.equals(Ui.language);
+        if (!listLanguage.equals(Ui.language)) for (Pick m : mine) m.detailed = false;   // their titles in the new language
         boolean missing = false;
         for (Pick pick : wanted()) missing |= !pick.detailed || !hasImage(pick) || needsLink(pick);
         if (!stale && !missing) return;
@@ -509,7 +561,7 @@ final class Recs {
             }
         }
         if (p.app != null) parts.add(SERVICE_NAME.get(p.app));
-        p.meta = String.join(" · ", parts);
+        p.meta = p.mine ? Ui.trf("Continue on {app}", "app", SERVICE_NAME.get(p.app)) : String.join(" · ", parts);
         p.detailed = true;
     }
 
@@ -781,13 +833,8 @@ final class Recs {
 
     private void save() {
         try {
-            JSONArray a = new JSONArray();
-            for (Pick p : picks) {
-                a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop).put("link", p.link == null ? "" : p.link)
-                        .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
-                        .put("detailed", p.detailed));
-            }
-            SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
+            SharedPreferences.Editor e = cache.edit().putString("picks", json(picks)).putString("mine", json(mine))
+                    .putInt("period", period).putLong("listAt", listAt)
                     .putString("language", listLanguage)
                     .putLong("keyStamp", keyStamp).putInt("version", CACHE_VERSION);
             // Watchmode links of titles no longer in the list go (the refused-key mark stays).
@@ -797,6 +844,16 @@ final class Recs {
             e.apply();
         } catch (Exception ignored) {
         }
+    }
+
+    private static String json(List<Pick> list) throws org.json.JSONException {
+        JSONArray a = new JSONArray();
+        for (Pick p : list) {
+            a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop).put("link", p.link == null ? "" : p.link)
+                    .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
+                    .put("detailed", p.detailed));
+        }
+        return a.toString();
     }
 
     private static List<Pick> parse(JSONArray a) {

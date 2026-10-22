@@ -93,6 +93,8 @@ final class HomeApps {
         {"peacock", "Peacock", "com.peacocktv.peacockandroid", "6E55DC", "", "1"},
         {"globoplay", "Globoplay", "com.globo.globotv", "FF5A1F", "tint", "1"},
         {"spotify", "Spotify", "com.spotify.tv.android", "1DB954", "", "1"},
+        {"hotstar", "JioHotstar", "in.startv.hotstar", "1F80E0", "", "1"},
+        {"sonyliv", "SonyLIV", "com.sonyliv", "E8B04B", "", "1"},
     };
     static final int MAX_SHELF = 8;
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
@@ -114,6 +116,11 @@ final class HomeApps {
             "com.Smartdevice.emanual",              // Skyworth: user manual
             "com.google.android.videos",            // Google Play Movies (discontinued)
             "com.disney.starplus",                  // Star+ (merged into Disney+)
+            "com.haier.apps",                       // Haier: app promos
+            "com.haier.apps.shahid",                // Haier: Shahid installer
+            "com.haier.apps.evoSmart",              // Haier: Evo smart home (Russia)
+            "com.mediatek.tv.service",              // MediaTek: a second Netflix icon (the real one stays)
+            "mediatek.factorymenu.ui",              // MediaTek: factory menu
             "com.tcl.exhibit"));                    // TCL: T-Exhibition
 
     private static final Map<String, Bitmap> TILES = new HashMap<>();   // key → ready card
@@ -376,6 +383,15 @@ final class HomeApps {
                 if (plain != null) plain.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                 if (intent != null && it.uri != null) {
                     intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.uri)).addCategory(Intent.CATEGORY_BROWSABLE).setPackage(it.pkg);
+                    // Netflix plays a /watch/ address only in a fresh task of its main activity, with its "source" (a
+                    // show's own number resumes it where you stopped); otherwise it shows its last screen.
+                    if (it.pkg.equals("com.netflix.ninja") && it.uri.startsWith("https://www.netflix.com/watch/")) {
+                        intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.uri))
+                                .addCategory("android.intent.category.LEANBACK_LAUNCHER")
+                                .setClassName(it.pkg, it.pkg + ".MainActivity").putExtra("source", "30")
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                        | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+                    }
                 }
                 break;
             case LIVE_TV:
