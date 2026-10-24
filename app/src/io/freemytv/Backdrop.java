@@ -109,6 +109,34 @@ final class Backdrop {
         return new Backdrop(gpu(out), frost, glass, null, null, null, null, null);
     }
 
+    /**
+     * A wallpaper (config.properties) behind the home screen without picks: a wide picture fills the screen; a tall
+     * one stands at the right, sharp, over a dark blur of itself. Then the same scrims as a photo.
+     */
+    static Backdrop wallpaper(Bitmap src) {
+        if (src.getWidth() >= src.getHeight() * 1.3f) return make(src, false);
+        Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(out);
+        Paint photo = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+        float cover = Math.max((float) W / src.getWidth(), (float) H / src.getHeight());
+        float cw = src.getWidth() * cover, ch = src.getHeight() * cover;
+        c.drawBitmap(src, null, new RectF((W - cw) / 2, (H - ch) / 2, (W + cw) / 2, (H + ch) / 2), photo);
+        Bitmap blur = Bitmap.createBitmap(reduce(out, FW, FH, 3, 3), FW, FH, Bitmap.Config.ARGB_8888);
+        c.drawBitmap(blur, null, new RectF(0, 0, W, H), photo);
+        blur.recycle();
+        c.drawColor(black(0.45f));
+        float pw = src.getWidth() * (float) H / src.getHeight(), left = W - pw;
+        int layer = c.saveLayer(left, 0, W, H, null);
+        c.drawBitmap(src, null, new RectF(left, 0, W, H), photo);
+        Paint edge = new Paint();
+        edge.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
+        edge.setShader(new LinearGradient(left, 0, left + pw * 0.12f, 0, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP));
+        c.drawRect(left, 0, W, H, edge);
+        c.restoreToCount(layer);
+        src.recycle();
+        return make(out, false);
+    }
+
     /** How many times smaller the screensaver photo's frosted version is (the glass math uses the same number). */
     static final int PHOTO_FROST = 6;
 

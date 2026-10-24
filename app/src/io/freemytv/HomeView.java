@@ -92,6 +92,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
+    /** The wallpaper (wallpaper in config.properties), built once per process; null without one or until it's ready. */
+    private static Backdrop wallpaper;
+    private static boolean wallpaperLoading;
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
     private static final float L_TITLE_BASE = 130, L_TABBAR_TOP = 158, L_TABBAR_H = 68, L_CARDS_TOP = 262, L_CARD_H = 442;
@@ -418,6 +421,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         reload();
         updatePalette();
         updatePicks();
+        loadWallpaper();
         if (sheetOpen) closeSheet();
         sheet.snap(sheet.target);
         motionDirty = true;
@@ -470,10 +474,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         motionDirty = true;
     }
 
-    /** The three corner buttons, with their names in the current language. */
+    /** The three corner buttons, with their names in the current language (without Live TV: the cameras or All Apps). */
     private void makeLightButtons() {
         lightButtons.clear();
-        lightButtons.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("light|Live TV"), "live_tv"));
+        HomeApps.Item first = Config.HIDE_LIVE_TV ? HomeApps.camerasButton(getContext()) : null;
+        if (first == null && Config.HIDE_LIVE_TV) first = HomeApps.action(HomeApps.ALL_APPS, "all", Ui.tr("All Apps"), "apps");
+        if (first == null) first = HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("light|Live TV"), "live_tv");
+        lightButtons.add(first);
         lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("HDMI Inputs"), "hdmi"));
         lightButtons.add(HomeApps.action(HomeApps.SETTINGS, "settings", Ui.tr("light|Settings"), "settings"));
     }
@@ -850,6 +857,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** What the glass shows: the photo lightened (by day), darkened (at night) or blended in between. */
     private int[] glassOf(Backdrop b) {
+        if (b.lightGlass == null) return b.glass;   // the wallpaper: one look, dark
         if (b.nightGlass == null || night <= 0.001f) return b.lightGlass;
         if (night >= 0.999f) return b.nightGlass;
         // During the transition, the blend (only for the current background; a photo fading in uses the nearer side).
@@ -931,7 +939,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** How dark it is: 0 = day, 1 = night (in between during the transition). */
     private float dark() {
-        return night;
+        return bgTo != null && bgTo == wallpaper ? 1 : night;   // white text on the wallpaper
     }
 
     /** The day color or the night color, depending on the night value (blended during the transition). */
@@ -2701,10 +2709,30 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         spoken.focusMoved();    // new picks under the focused card
     }
 
-    /** The background is the wide card's photo (it fades over as another card widens). */
+    /** The background is the wide card's photo (it fades over as another card widens); without picks, the wallpaper. */
     private void showCardBackdrop() {
-        Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(Math.min(cardIndex, cards.size() - 1)));
+        Backdrop b = cards.isEmpty() ? wallpaper : recs.backdrop(cards.get(Math.min(cardIndex, cards.size() - 1)));
         if (cards.isEmpty() || b != null) showBackdrop(b);
+    }
+
+    private void loadWallpaper() {
+        if (wallpaper != null || wallpaperLoading || picksOn()) return;
+        wallpaperLoading = true;
+        final Context c = getContext().getApplicationContext();
+        LOADER.execute(() -> {
+            Backdrop b = null;
+            try (java.io.InputStream in = c.getAssets().open("wallpaper")) {
+                Bitmap src = android.graphics.BitmapFactory.decodeStream(in);
+                if (src != null) b = Backdrop.wallpaper(src);
+            } catch (java.io.IOException ignored) {   // this build has no wallpaper
+            }
+            final Backdrop ready = b;
+            if (ready != null) post(() -> {
+                wallpaper = ready;
+                showCardBackdrop();
+                nightChanged();
+            });
+        });
     }
 
     private void selectTab(int index) {
@@ -2723,7 +2751,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
         // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
-        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
+        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, dark()));
         if (bgTo == null || (fading && bgFrom == null)) {
             if (lightGradient == null) lightGradient = new LinearGradient(0, 0, 0, h, 0xFFF5F5F7, 0xFFE2E2E7, Shader.TileMode.CLAMP);
             if (nightGradient == null) nightGradient = new LinearGradient(0, 0, 0, h, 0xFF1C1C1E, 0xFF0B0B0D, Shader.TileMode.CLAMP);
@@ -2749,6 +2777,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawLightImage(Canvas c, Backdrop b, float alpha) {
+        if (b.lightImage == null) {   // the wallpaper, sharp
+            drawImage(c, b.image, alpha);
+            return;
+        }
         if (night < 0.999f || b.nightImage == null) drawImage(c, b.lightImage, alpha);
         if (night > 0.001f) drawImage(c, b.nightImage, alpha * night);
     }

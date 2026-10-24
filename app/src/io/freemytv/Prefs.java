@@ -32,7 +32,15 @@ final class Prefs {
     static final int KEY_SONY_CORE = SONY_KEY + 496, KEY_SONY_NETFLIX = SONY_KEY + 583, KEY_SONY_DISNEY = SONY_KEY + 491,
             KEY_SONY_PRIME = SONY_KEY + 490, KEY_SONY_YOUTUBE = SONY_KEY + 485, KEY_SONY_CRUNCHYROLL = SONY_KEY + 507,
             KEY_SONY_PLAY = SONY_KEY + 587;   // the Google Play button of older remotes: BUTTON_8 (BRAVIA 4K UR3, Android 10)
-    static final int[] KEYS = RemoteKeys.SONY
+    /**
+     * OnePlus (Skyworth-made, MediaTek): Netflix is STEM_1; YouTube and Prime Video come as input keys the TV's hot-key
+     * dispatcher turns into app launches (scan codes 63 and 61); Menu and the mic button are plain keys.
+     */
+    static final int KEY_ONEPLUS_YOUTUBE = KeyEvent.KEYCODE_TV_INPUT_COMPOSITE_1, KEY_ONEPLUS_PRIME = KeyEvent.KEYCODE_TV_INPUT_HDMI_3,
+            KEY_MENU = KeyEvent.KEYCODE_MENU, KEY_MIC = KeyEvent.KEYCODE_SEARCH;
+    static final int[] KEYS = RemoteKeys.ONEPLUS
+            ? new int[] {KEY_STEM_NETFLIX, KEY_ONEPLUS_YOUTUBE, KEY_ONEPLUS_PRIME, KEY_MENU, KEY_MIC}
+            : RemoteKeys.SONY
             ? new int[] {KEY_SONY_CORE, KEY_SONY_NETFLIX, KEY_SONY_DISNEY, KEY_SONY_PRIME, KEY_SONY_YOUTUBE, KEY_SONY_CRUNCHYROLL,
                     KEY_SONY_PLAY}
             : RemoteKeys.STEM_NETFLIX ? new int[] {KEY_STEM_NETFLIX}
@@ -142,12 +150,38 @@ final class Prefs {
     // MARK: - Remote buttons
 
     private static String defaultApp(int keyCode) {
+        if (RemoteKeys.ONEPLUS) return configApp(keyCode);   // "": the TV's own button
         switch (keyCode) {
             case KEY_NETFLIX: case KEY_STEM_NETFLIX: return "com.netflix.ninja";
             case KEY_YOUTUBE: return "com.google.android.youtube.tv";
             case KEY_PRIME: return "com.amazon.amazonvideo.livingroom";
             case KEY_TCL_CHANNEL: return "";
             default: return "";
+        }
+    }
+
+    /**
+     * remote_buttons in config.properties ("menu=cameras,prime=in.startv.hotstar,mic=voice"): what each button opens
+     * until it's changed on the TV. "cameras" is camera_hdmi, "voice" is YouTube's voice search.
+     */
+    private static String configApp(int keyCode) {
+        for (String pair : Config.REMOTE_BUTTONS.split(",")) {
+            String[] kv = pair.trim().split("=", 2);
+            if (kv.length < 2 || keyCode != buttonKey(kv[0].trim())) continue;
+            String app = kv[1].trim();
+            return app.equals("cameras") ? HomeApps.CAMERA : app.equals("voice") ? RemoteKeys.VOICE : app;
+        }
+        return "";
+    }
+
+    private static int buttonKey(String name) {
+        switch (name) {
+            case "netflix": return KEY_STEM_NETFLIX;
+            case "youtube": return KEY_ONEPLUS_YOUTUBE;
+            case "prime": return KEY_ONEPLUS_PRIME;
+            case "menu": return KEY_MENU;
+            case "mic": return KEY_MIC;
+            default: return -1;
         }
     }
 

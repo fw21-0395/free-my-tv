@@ -41,6 +41,8 @@ LON="$(number longitude -74.0060)"
 ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
 CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
+NO_LIVE_TV=false; [ "$(prop hide_live_tv false)" = "true" ] && NO_LIVE_TV=true
+START_CAMERAS=false; [ "$(prop start_on_cameras false)" = "true" ] && START_CAMERAS=true
 
 rm -rf out && mkdir -p out/gen/io/freemytv out/classes
 cat > out/gen/io/freemytv/Config.java <<EOF
@@ -61,18 +63,32 @@ final class Config {
     static final String TEMPERATURE = "$(prop temperature auto)";
     static final String HIDE_SERVICES = "$(prop hide_services '')";
     static final String MY_SHOWS = "$(prop my_shows '')";
+    static final String REMOTE_BUTTONS = "$(prop remote_buttons '')";
+    static final String WEEKLY_RESTART = "$(prop weekly_restart '')";
+    static final int AUTO_WAKE_MINUTES = $(number auto_wake_minutes 0);
     static final String CAMERA_HDMI = "$(prop camera_hdmi '')";
     static final boolean DISABLE_ASSISTANT = $ASSIST;
     static final boolean SHOW_CRYPTO = $CRYPTO;
     static final boolean HIDE_ANIMATION = $ANIMATION;
+    static final boolean HIDE_LIVE_TV = $NO_LIVE_TV;
+    static final boolean START_ON_CAMERAS = $START_CAMERAS;
 }
 EOF
 
 # --- Build
 "$BT/aapt2" compile --dir app/res -o out/res.zip
 # Fonts uncompressed: Android reads them straight from the APK.
+# A wallpaper (optional): packed with the assets as "wallpaper".
+ASSETS=app/assets
+WALL="$(prop wallpaper '')"
+if [ -n "$WALL" ]; then
+  WALL="${WALL/#\~/$HOME}"
+  [ -f "$WALL" ] || { echo "config.properties: wallpaper not found: $WALL" >&2; exit 1; }
+  cp -R app/assets out/assets && cp "$WALL" out/assets/wallpaper
+  ASSETS=out/assets
+fi
 "$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip \
-  --min-sdk-version 26 --target-sdk-version 33 -A app/assets -0 ttf
+  --min-sdk-version 26 --target-sdk-version 33 -A "$ASSETS" -0 ttf
 # Windows aapt2 packs assets with backslash separators ("assets/symbols\x.png") and Android
 # cannot find them: the home screen loses its icons and fonts. Rename the zip entries to "/".
 case "$(uname -s 2>/dev/null)" in

@@ -680,6 +680,8 @@ public class SettingsActivity extends Activity {
         }
 
         private String[] keyLabels() {
+            if (RemoteKeys.ONEPLUS) return new String[] {Ui.tr("Netflix button"), Ui.tr("YouTube button"),
+                    Ui.tr("Prime Video button"), Ui.tr("Menu button"), Ui.tr("Mic button")};
             if (RemoteKeys.STEM_NETFLIX) return new String[] {Ui.tr("Netflix button")};
             if (RemoteKeys.KTC) return new String[] {Ui.tr("Tabii button")};
             if (RemoteKeys.SONY) return new String[] {Ui.tr("BRAVIA CORE button"),
@@ -711,6 +713,14 @@ public class SettingsActivity extends Activity {
             appPkgs.add("");
             // On Sony, "nothing" leaves the key to the TV, which opens its usual app.
             appLabels.add(RemoteKeys.SONY ? Ui.tr("Sony default") : Ui.tr("Nothing"));
+            if (HomeApps.cameras(getContext(), false) != null) {
+                appPkgs.add(HomeApps.CAMERA);
+                appLabels.add(Ui.tr("Cameras"));
+            }
+            if (HomeApps.launchIntent(getContext().getPackageManager(), "com.google.android.youtube.tv") != null) {
+                appPkgs.add(RemoteKeys.VOICE);
+                appLabels.add(Ui.tr("YouTube voice search"));
+            }
             for (String[] f : found) {
                 appPkgs.add(f[0]);
                 appLabels.add(f[1]);
@@ -962,6 +972,7 @@ public class SettingsActivity extends Activity {
                         : RemoteKeys.KTC ? Ui.tr("Netflix, YouTube and Prime Video: the TV itself controls those buttons.")
                         : RemoteKeys.SONY ? Ui.tr("Sony default: the button opens what it always did.")
                         : RemoteKeys.FORMOVIE ? Ui.tr("The other buttons: the TV itself controls them.")
+                        : RemoteKeys.ONEPLUS ? Ui.tr("Nothing: the button works as always.")
                         : RemoteKeys.supported() ? Ui.tr("Disney and Globoplay: the TV itself controls those buttons.")
                         : Ui.tr("TCL remote buttons: on this TV they work as always."), LIST_X * k + 30 * k, hy + 38 * k, hint);
             }

@@ -1,13 +1,20 @@
 package io.freemytv;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.widget.TextView;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 /**
  * The Free My TV home screen (Android's "Home" role in Free My TV mode). It runs in the :home process: if it crashes,
@@ -37,6 +44,11 @@ public class HomeActivity extends Activity {
         home = new HomeView(this);
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
+        StayOn.watch(this);
+        // The first home screen after the TV starts (a restart, a power cut): straight to the cameras, once.
+        if (Config.START_ON_CAMERAS && SystemClock.elapsedRealtime() < 5 * 60_000L && firstSinceBoot(this)) {
+            StayOn.showCameras(this);
+        }
     }
 
     @Override protected void onResume() {
@@ -54,6 +66,24 @@ public class HomeActivity extends Activity {
         if (home != null) home.pause();
         super.onPause();
     }
+
+    /** True only the first time it's asked after the TV booted (a file keeps the boot's time, to the minute). */
+    private static boolean firstSinceBoot(Context c) {
+        long boot = (System.currentTimeMillis() - SystemClock.elapsedRealtime()) / 60_000L;
+        File f = new File(c.getFilesDir(), "cameras-boot.txt");
+        try {
+            String last = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim();
+            if (Math.abs(Long.parseLong(last) - boot) <= 1) return false;
+        } catch (IOException | NumberFormatException ignored) {
+        }
+        try (FileOutputStream out = new FileOutputStream(f)) {
+            out.write(String.valueOf(boot).getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            return false;
+        }
+        return true;
+    }
+
 
     /** Home button pressed on the home screen: back to the entry state (focus on the first app, sheet closed). */
     @Override protected void onNewIntent(Intent intent) {

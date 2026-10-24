@@ -149,7 +149,7 @@ final class HomeApps {
             it.pkg = pkg;
             if (CAMERA.equals(pkg)) {
                 it.kind = INPUT;
-                it.inputId = launch.getData() == null ? null : launch.getData().getPathSegments().get(1);
+                it.inputId = launch.getData().getLastPathSegment();
                 it.key = d[0];
                 it.label = Ui.tr("Cameras");
                 it.tile = symbolTile(c, "camera", "camera");
@@ -206,7 +206,7 @@ final class HomeApps {
     /** Live TV, the HDMI inputs with a device sending a signal, and All Apps. */
     static List<Item> shortcuts(Context c) {
         List<Item> items = new ArrayList<>();
-        if (liveTv(c) != null) {
+        if (!Config.HIDE_LIVE_TV && liveTv(c) != null) {
             items.add(shortcut(LIVE_TV, "live", Ui.tr("Live TV"), "tv"));
         }
         items.addAll(inputs(c));
@@ -261,7 +261,7 @@ final class HomeApps {
     /** For the bottom drawer: live TV and every HDMI input (the ones with no device are shown dimmed). */
     static List<Item> allInputs(Context c) {
         List<Item> items = new ArrayList<>();
-        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("Live TV"), "tv"));
+        if (!Config.HIDE_LIVE_TV && liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("Live TV"), "tv"));
         items.addAll(inputs(c, true));
         return items;
     }
@@ -342,6 +342,15 @@ final class HomeApps {
             return new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(it.inputId));
         }
         return null;
+    }
+
+    /** The cameras' input as a button (a corner of the home screen without Live TV); null without camera_hdmi. */
+    static Item camerasButton(Context c) {
+        Intent cameras = cameras(c, false);
+        if (cameras == null) return null;
+        Item it = shortcut(INPUT, "camera", Ui.tr("Cameras"), "camera");
+        it.inputId = cameras.getData().getLastPathSegment();
+        return it;
     }
 
     /** Words in a device's name, by the icon they pick: a game console, a streaming box, a sound system, a TV box. */

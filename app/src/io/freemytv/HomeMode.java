@@ -492,6 +492,13 @@ final class HomeMode {
                     }
                 }
                 Set<String> disabled = new HashSet<>(stringList(s, "disabled"));
+                if (!Config.DISABLE_ASSISTANT) {
+                    // The assistant wanted again (disable_assistant=false): back on, no longer ours to turn off.
+                    for (String pkg : ASSISTANT) {
+                        wanted.remove(pkg);
+                        if (disabled.remove(pkg) && disabledNow.contains(pkg)) adb.shell("pm enable " + pkg);
+                    }
+                }
                 // Off before Free My TV: turned off again if a TV update brings one back, but never handed to
                 // Original to turn on.
                 List<String> keptOff = stringList(s, "keptOff");
