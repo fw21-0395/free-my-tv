@@ -80,6 +80,8 @@ final class HomeMode {
         "com.mediatek.tv.retaildemo", "com.electronic.manual",                        // store demo, manual
         // Haier (MediaTek, Android TV 11); its Anoki ACR and store demo are above
         "com.haier.launcher.haiermatrix",                                             // Zeasn promo channels, app picks
+        // OnePlus (Skyworth-made Y Series, MediaTek, Android TV 11); its other store demo is above
+        "com.smartdevice.common.demonow",                                             // store demo
     };
 
     /** The voice assistant, only with disable_assistant=true in config.properties (the mic button stops working). */
@@ -141,7 +143,12 @@ final class HomeMode {
         // Haier (MediaTek): settings and accessory pairing, live TV overlay, remote keys, inputs and factory menu,
         // install config, low-RAM overlay
         "com.haier.tv.settings", "com.haier.overlay.tvcenter", "com.oem", "com.haier.oemmanualtest",
-        "android.autoinstalls.config.haier.hanyang", "com.android.tv.overlay.lowram"));
+        "android.autoinstalls.config.haier.hanyang", "com.android.tv.overlay.lowram",
+        // OnePlus (Skyworth-made): phone remote, Bluetooth remote updates, factory installer, install config, live TV
+        // overlay, boot splash, launcher config
+        "com.oneplus.tv.remote", "com.airoha.ble.ota", "com.coocaa.factory", "android.autoinstalls.config.skyworth",
+        "com.mediatek.wwtv.tvcenter.overlay", "com.google.android.boot.appsplashscreen",
+        "com.google.android.leanbacklauncher.partnercustomizer"));
 
     /** One switch at a time (jobs can overlap: a boot check and a button press). */
     private static final Object RUN = new Object();

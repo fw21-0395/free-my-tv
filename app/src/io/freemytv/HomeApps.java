@@ -80,6 +80,7 @@ final class HomeApps {
      * (YouTube); empty = the art's colors as they are. Last, a visual size tweak for the logo. Edit freely.
      */
     private static final String[][] SHELF = {
+        {"camera", "Cameras", HomeApps.CAMERA, "3DDC97", "", "1"},   // only with camera_hdmi in config.properties
         {"netflix", "Netflix", "com.netflix.ninja", "E50914", "", "1"},
         {"youtube", "YouTube", "com.google.android.youtube.tv", "FF0033", "play", "1"},
         {"prime", "Prime Video", "com.amazon.amazonvideo.livingroom", "1A98FF", "tint", "0.96"},
@@ -97,6 +98,8 @@ final class HomeApps {
         {"sonyliv", "SonyLIV", "com.sonyliv", "E8B04B", "", "1"},
     };
     static final int MAX_SHELF = 8;
+    /** The cameras' card (camera_hdmi) stands in the shelf lists as this package name; it opens that HDMI input. */
+    static final String CAMERA = "io.freemytv.camera";
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
     static final String[] LIVE_TV_APPS = {"com.tcl.tv", "com.google.android.tv", "com.mediatek.wwtv.tvcenter", "com.sony.dtv.tvx",
             "com.smartdevice.livetv", "com.mediatek.tv.oneworld.tvcenter"};
@@ -113,7 +116,9 @@ final class HomeApps {
             "com.homwee.chtvmanager",               // Philco: TV Manager (cleaner)
             "com.homwee.multiscreenshare",          // Philco: Midiacast (Chromecast still works)
             "com.xiaomi.mitv.manualhelp",           // Xiaomi: user manual
-            "com.Smartdevice.emanual",              // Skyworth: user manual
+            "com.Smartdevice.emanual",              // Skyworth (and OnePlus): user manual
+            "com.oneplus.tv.remote",                // OnePlus: phone remote (its service keeps working)
+            "com.coocaa.factory",                   // OnePlus: factory installer
             "com.google.android.videos",            // Google Play Movies (discontinued)
             "com.disney.starplus",                  // Star+ (merged into Disney+)
             "com.haier.apps",                       // Haier: app promos
@@ -142,7 +147,13 @@ final class HomeApps {
             Item it = new Item();
             it.kind = APP;
             it.pkg = pkg;
-            if (d == null) {
+            if (CAMERA.equals(pkg)) {
+                it.kind = INPUT;
+                it.inputId = launch.getData() == null ? null : launch.getData().getPathSegments().get(1);
+                it.key = d[0];
+                it.label = Ui.tr("Cameras");
+                it.tile = symbolTile(c, "camera", "camera");
+            } else if (d == null) {
                 // An app picked in Settings > Shelf that isn't in SHELF: its own name and TV art.
                 it.key = pkg;
                 it.label = ri != null ? String.valueOf(ri.loadLabel(pm)) : pkg;
@@ -317,6 +328,20 @@ final class HomeApps {
         }
         Collections.sort(out, (a, b) -> a.number.compareTo(b.number));
         return out;
+    }
+
+    /**
+     * The cameras' HDMI input (camera_hdmi), as the request that shows it; null without one. `live`: only while the
+     * recorder sends a picture (the screensaver doesn't switch to an empty input).
+     */
+    static Intent cameras(Context c, boolean live) {
+        String number = Config.CAMERA_HDMI.trim();
+        if (number.isEmpty() || c == null) return null;
+        for (Item it : inputs(c, true)) {
+            if (!it.number.equals(number) || (live && !it.connected)) continue;
+            return new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(it.inputId));
+        }
+        return null;
     }
 
     /** Words in a device's name, by the icon they pick: a game console, a streaming box, a sound system, a TV box. */
@@ -497,6 +522,7 @@ final class HomeApps {
     }
 
     static Intent launchIntent(PackageManager pm, String pkg) {
+        if (CAMERA.equals(pkg)) return cameras(Prefs.context(), false);
         Intent intent = pm.getLeanbackLaunchIntentForPackage(pkg);
         return intent != null ? intent : pm.getLaunchIntentForPackage(pkg);
     }

@@ -724,17 +724,39 @@ final class Recs {
         String key = readKey();
         if (key == null) throw new IOException("no TMDB key");
         boolean bearer = key.startsWith("eyJ");   // read access token (v4) or API key (v3)
-        String url = API + path + (bearer ? "" : (path.contains("?") ? "&" : "?") + "api_key=" + URLEncoder.encode(key, "UTF-8"));
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        URL url = new URL(API + path + (bearer ? "" : (path.contains("?") ? "&" : "?") + "api_key=" + URLEncoder.encode(key, "UTF-8")));
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Accept", "application/json");
+        if (bearer) headers.put("Authorization", "Bearer " + key);
+        String[] r;   // {status code, body}
+        if (Doh.known(url.getHost())) {
+            r = Doh.get(url, headers);
+        } else {
+            try {
+                r = fetch(url, headers);
+            } catch (IOException e) {
+                // Jio's DNS points TMDB at a block page: ask Cloudflare for the real address
+                try {
+                    r = Doh.get(url, headers);
+                    AppLog.w("TMDB: the TV's DNS failed (" + e.getMessage() + "), using Cloudflare's");
+                } catch (IOException ignored) {
+                    throw e;
+                }
+            }
+        }
+        if (r[0].equals("401")) throw new IOException("TMDB rejected the key");
+        if (!r[0].equals("200")) throw new IOException("TMDB returned HTTP " + r[0]);
+        return new JSONObject(r[1]);
+    }
+
+    private static String[] fetch(URL url, Map<String, String> headers) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) url.openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(8000);
-        c.setRequestProperty("Accept", "application/json");
-        if (bearer) c.setRequestProperty("Authorization", "Bearer " + key);
+        for (Map.Entry<String, String> h : headers.entrySet()) c.setRequestProperty(h.getKey(), h.getValue());
         try {
             int code = c.getResponseCode();
-            if (code == 401) throw new IOException("TMDB rejected the key");
-            if (code != 200) throw new IOException("TMDB returned HTTP " + code);
-            return new JSONObject(read(c.getInputStream()));
+            return new String[] {String.valueOf(code), code == 200 ? read(c.getInputStream()) : ""};
         } finally {
             c.disconnect();
         }

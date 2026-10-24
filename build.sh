@@ -61,6 +61,7 @@ final class Config {
     static final String TEMPERATURE = "$(prop temperature auto)";
     static final String HIDE_SERVICES = "$(prop hide_services '')";
     static final String MY_SHOWS = "$(prop my_shows '')";
+    static final String CAMERA_HDMI = "$(prop camera_hdmi '')";
     static final boolean DISABLE_ASSISTANT = $ASSIST;
     static final boolean SHOW_CRYPTO = $CRYPTO;
     static final boolean HIDE_ANIMATION = $ANIMATION;
