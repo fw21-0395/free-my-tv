@@ -43,6 +43,8 @@ final class HomeMode {
     /** Classic Android TV's home screen; its recommendations service crashes on the screensaver while it's off (#11). */
     static final String TV_LAUNCHER = "com.google.android.tvlauncher";
     static final String TV_RECOMMENDATIONS = "com.google.android.tvrecommendations";
+    /** Google Play Movies, shut down on classic Android TV (on Google TV the same package is the Google TV app). */
+    static final String PLAY_MOVIES = "com.google.android.videos";
     /** Google TV's home screen: the fallback when the TV's own one wasn't recorded. */
     static final String GOOGLE_HOME = "com.google.android.apps.tv.launcherx/.home.HomeActivity";
     /**
@@ -538,7 +540,10 @@ final class HomeMode {
         List<String> out = new ArrayList<>();
         String homePkg = packageOf(home);
         if (homePkg != null && !homePkg.equals(PKG)) out.add(homePkg);
-        if (TV_LAUNCHER.equals(homePkg)) out.add(TV_RECOMMENDATIONS);
+        if (TV_LAUNCHER.equals(homePkg)) {
+            out.add(TV_RECOMMENDATIONS);
+            out.add(PLAY_MOVIES);
+        }
         if (setupHome) out.add(GOOGLE_SETUP);
         String dreamPkg = packageOf(dream);
         if (dreamPkg != null && !dreamPkg.equals(PKG) && !dreamPkg.equals(homePkg)) out.add(dreamPkg);
